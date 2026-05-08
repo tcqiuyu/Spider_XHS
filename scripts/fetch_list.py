@@ -77,7 +77,10 @@ def _save_cached_list(notes: list[dict]) -> None:
 
 
 def _fetch_full_list(xhs_apis: XHS_Apis, cookies_str: str) -> list[dict]:
-    """全量拉取收藏列表（首次运行或缓存不存在时使用）。"""
+    """全量拉取收藏列表（首次运行或缓存不存在时使用）。
+
+    中途失败时保存已拉到的部分，下次用增量模式补全。
+    """
     cursor = ""
     all_notes: list[dict] = []
     page = 0
@@ -91,16 +94,24 @@ def _fetch_full_list(xhs_apis: XHS_Apis, cookies_str: str) -> list[dict]:
             logger.error(f"获取收藏列表第 {page} 页失败: {msg}")
             break
 
-        notes: list[dict] = res_json["data"]["notes"]
+        data = res_json.get("data") or {}
+        notes = data.get("notes")
+        if notes is None:
+            logger.warning(f"第 {page} 页响应缺少 notes 字段，可能触发风控，停止拉取")
+            break
+
         all_notes.extend(notes)
         logger.info(f"第 {page} 页: {len(notes)} 条，累计 {len(all_notes)} 条")
 
-        has_more: bool = res_json["data"].get("has_more", False)
-        if not has_more or "cursor" not in res_json["data"]:
+        if not data.get("has_more") or "cursor" not in data:
             break
 
-        cursor = str(res_json["data"]["cursor"])
+        cursor = str(data["cursor"])
         time.sleep(1)
+
+    if all_notes:
+        _save_cached_list(all_notes)
+        logger.info(f"已保存 {len(all_notes)} 条（可能不完整，下次运行会增量补全）")
 
     return all_notes
 
@@ -126,7 +137,11 @@ def _fetch_incremental(
             logger.error(f"增量拉取第 {page} 页失败: {msg}")
             break
 
-        notes: list[dict] = res_json["data"]["notes"]
+        data = res_json.get("data") or {}
+        notes = data.get("notes")
+        if notes is None:
+            logger.warning(f"增量拉取第 {page} 页响应缺少 notes 字段，停止")
+            break
         hit_known = False
         for note in notes:
             nid: str = note.get("note_id") or note.get("id", "")
@@ -139,11 +154,10 @@ def _fetch_incremental(
             logger.info(f"增量检测：第 {page} 页命中已知笔记，停止拉取")
             break
 
-        has_more: bool = res_json["data"].get("has_more", False)
-        if not has_more or "cursor" not in res_json["data"]:
+        if not data.get("has_more") or "cursor" not in data:
             break
 
-        cursor = str(res_json["data"]["cursor"])
+        cursor = str(data["cursor"])
         time.sleep(1)
 
     return new_notes
