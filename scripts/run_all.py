@@ -37,13 +37,18 @@ def main() -> None:
         default=None,
         help="download 步骤的处理数量限制（默认不限制）",
     )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="强制重新拉取收藏列表（刷新 xsec_token）",
+    )
     args = parser.parse_args()
 
     logger.info("=" * 50)
     logger.info("=== 步骤 1: 获取小红书收藏列表 ===")
     logger.info("=" * 50)
     try:
-        fetch_list_main()
+        fetch_list_main(refresh=args.refresh)
         logger.info("✓ 步骤 1 完成")
     except Exception as e:
         logger.error(f"✗ 步骤 1 失败: {e}")

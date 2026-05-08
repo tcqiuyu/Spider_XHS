@@ -15,7 +15,6 @@ window.__INITIAL_STATE__ 获取数据。
 import argparse
 import asyncio
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -45,7 +44,6 @@ WORK_PATH = _PROJECT_ROOT / "datas" / "xhs_download"
 FOLDER_NAME = "Download"
 DOWNLOAD_ROOT = WORK_PATH / FOLDER_NAME
 
-EXPLORE_ID_DB = WORK_PATH / "ExploreID.db"
 EXPLORE_DATA_DB = DOWNLOAD_ROOT / "ExploreData.db"
 
 EXPORT_EXCEL_PATH = _PROJECT_ROOT / "datas" / "excel_datas" / "我的收藏.xlsx"
@@ -78,21 +76,17 @@ def _load_collect_list() -> list[dict]:
         return []
 
 
-def _load_downloaded_ids() -> set[str]:
-    """从 ExploreID.db 读取已下载的笔记 ID 集合。"""
-    if not EXPLORE_ID_DB.exists():
-        return set()
-    try:
-        conn = sqlite3.connect(EXPLORE_ID_DB)
-        cur = conn.cursor()
-        cur.execute("SELECT ID FROM explore_id")
-        ids = {row[0] for row in cur.fetchall()}
-        conn.close()
-        logger.info(f"已加载已下载 ID: {len(ids)} 条")
-        return ids
-    except sqlite3.Error as exc:
-        logger.warning(f"读取 ExploreID.db 失败（将视为空）: {exc}")
-        return set()
+def _scan_completed_ids() -> set[str]:
+    """扫描 Download 目录，找到已有 info.json 的笔记 ID（真正完成的）。"""
+    completed = set()
+    if not DOWNLOAD_ROOT.exists():
+        return completed
+    for info_path in DOWNLOAD_ROOT.rglob("info.json"):
+        parts = info_path.parent.name.rsplit("_", 1)
+        if len(parts) == 2:
+            completed.add(parts[1])
+    logger.info(f"本地已完成: {len(completed)} 条（有 info.json）")
+    return completed
 
 
 def _build_note_url(note_id: str, xsec_token: str) -> str:
@@ -203,7 +197,7 @@ async def _download_all(notes: list[dict]) -> None:
         author_archive=True,
         folder_mode=True,
         record_data=True,
-        download_record=True,
+        download_record=False,
         image_format="JPEG",
         image_download=True,
         video_download=True,
@@ -294,16 +288,16 @@ def main(limit: int | None = None) -> None:
     if not all_notes:
         return
 
-    # 2. 加载已下载 ID，过滤已完成的笔记
-    downloaded_ids = _load_downloaded_ids()
+    # 2. 扫描本地已完成的笔记（有 info.json 的），过滤掉
+    completed_ids = _scan_completed_ids()
     pending_notes = [
         n
         for n in all_notes
-        if (n.get("note_id") or n.get("id", "")) not in downloaded_ids
+        if (n.get("note_id") or n.get("id", "")) not in completed_ids
     ]
     logger.info(
         f"收藏列表 {len(all_notes)} 条，"
-        f"已下载 {len(downloaded_ids)} 条，"
+        f"已完成 {len(completed_ids)} 条，"
         f"待处理 {len(pending_notes)} 条"
     )
 

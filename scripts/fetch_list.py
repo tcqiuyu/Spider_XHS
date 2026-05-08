@@ -205,19 +205,25 @@ def _export_summary(notes: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    """获取收藏列表，更新缓存，导出摘要。"""
+def main(refresh: bool = False) -> None:
+    """获取收藏列表，更新缓存，导出摘要。
+
+    参数
+    ----
+    refresh : 强制重新全量拉取（刷新 xsec_token），忽略本地缓存。
+    """
     cookies_str = load_env()
     if not cookies_str:
         logger.error("未找到 COOKIES 环境变量，请在 .env 中配置后重试")
         return
 
     xhs_apis = XHS_Apis()
-    cached_list = _load_cached_list()
+    cached_list = [] if refresh else _load_cached_list()
+
+    if refresh:
+        logger.info("强制刷新模式，重新全量拉取收藏列表...")
 
     if not cached_list:
-        # ── 全量拉取 ───────────────────────────────────────────────────────────
-        logger.info("本地缓存不存在，开始全量拉取收藏列表...")
         all_notes = _fetch_full_list(xhs_apis, cookies_str)
         if not all_notes:
             logger.warning("未获取到任何笔记，请检查 Cookie 是否有效")
@@ -225,7 +231,6 @@ def main() -> None:
         _save_cached_list(all_notes)
         logger.info(f"全量拉取完成，共 {len(all_notes)} 条")
     else:
-        # ── 增量检测 ───────────────────────────────────────────────────────────
         known_ids: set[str] = {
             n.get("note_id") or n.get("id", "") for n in cached_list
         }
@@ -244,4 +249,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="获取小红书收藏列表")
+    parser.add_argument("--refresh", action="store_true", help="强制重新全量拉取（刷新 xsec_token）")
+    args = parser.parse_args()
+    main(refresh=args.refresh)
