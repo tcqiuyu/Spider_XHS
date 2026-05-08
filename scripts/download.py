@@ -147,34 +147,11 @@ def _convert_to_info_json(result: dict, note_url: str) -> dict:
     }
 
 
-_DETAIL_FIELDS = [
-    ("note_id", "笔记ID"),
-    ("note_url", "笔记链接"),
-    ("note_type", "笔记类型"),
-    ("nickname", "作者"),
-    ("title", "标题"),
-    ("desc", "描述"),
-    ("liked_count", "点赞数"),
-    ("collected_count", "收藏数"),
-    ("comment_count", "评论数"),
-    ("share_count", "分享数"),
-    ("tags", "标签"),
-    ("upload_time", "发布时间"),
-]
-
-
 def _write_info_json(note_info: dict, note_dir: Path) -> None:
-    """将 info.json 和 detail.txt 写入笔记下载目录。"""
+    """将 info.json 写入笔记下载目录。"""
     note_dir.mkdir(parents=True, exist_ok=True)
-
-    # info.json
     with open(note_dir / "info.json", "w", encoding="utf-8") as f:
         json.dump(note_info, f, ensure_ascii=False, indent=2)
-
-    # detail.txt — 人类可读的键值对摘要
-    with open(note_dir / "detail.txt", "w", encoding="utf-8") as f:
-        for key, label in _DETAIL_FIELDS:
-            f.write(f"{label}: {note_info.get(key, '')}\n")
 
 
 def _find_note_dir(note_id: str) -> Path | None:
