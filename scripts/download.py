@@ -191,7 +191,14 @@ def _fallback_spider_xhs(note_id: str, xsec_token: str, cookies_str: str) -> boo
     note_info = items[0]
     note_info["url"] = note_url
     note_info = handle_note_info(note_info)
-    download_note(note_info, str(DOWNLOAD_ROOT), "all")
+    save_path = Path(download_note(note_info, str(DOWNLOAD_ROOT), "all"))
+
+    # download_note 写的 detail.txt 和 info.json 格式不符合我们的标准，修正
+    detail_path = save_path / "detail.txt"
+    if detail_path.exists():
+        detail_path.unlink()
+    _write_info_json(note_info, save_path)
+
     logger.info(f"  -> Spider_XHS fallback 成功: {note_info['title'][:30]}")
     return True
 
