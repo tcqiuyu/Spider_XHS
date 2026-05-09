@@ -219,12 +219,69 @@ def _export_summary(notes: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _scan_completed_ids() -> set[str]:
+    """扫描 Download 目录，找到已有 info.json 的笔记 ID。"""
+    download_root = _PROJECT_ROOT / "datas" / "xhs_download" / "Download"
+    completed = set()
+    if not download_root.exists():
+        return completed
+    for info_path in download_root.rglob("info.json"):
+        parts = info_path.parent.name.rsplit("_", 1)
+        if len(parts) == 2:
+            completed.add(parts[1])
+    return completed
+
+
+def _refresh_pending_tokens(
+    xhs_apis: XHS_Apis, cookies_str: str, cached_list: list[dict], pending_ids: set[str]
+) -> list[dict]:
+    """从 API 重新拉取，只更新未完成笔记的 xsec_token，拉到够了就停。"""
+    cache_by_id = {n.get("note_id") or n.get("id", ""): n for n in cached_list}
+    remaining = set(pending_ids)
+    refreshed = 0
+    cursor = ""
+    page = 0
+
+    while remaining:
+        page += 1
+        success, msg, res_json = xhs_apis.get_user_collect_note_info(
+            USER_ID, cursor, cookies_str, xsec_token="", xsec_source="pc_user"
+        )
+        if not success:
+            logger.error(f"刷新第 {page} 页失败: {msg}")
+            break
+
+        data = res_json.get("data") or {}
+        notes = data.get("notes")
+        if notes is None:
+            logger.warning(f"刷新第 {page} 页响应缺少 notes 字段，停止")
+            break
+
+        for note in notes:
+            nid = note.get("note_id") or note.get("id", "")
+            if nid in remaining:
+                cache_by_id[nid] = note
+                remaining.discard(nid)
+                refreshed += 1
+
+        logger.info(f"刷新第 {page} 页: 本页 {len(notes)} 条，已刷新 {refreshed} 条 token，剩余 {len(remaining)} 条")
+
+        if not data.get("has_more") or "cursor" not in data:
+            break
+        cursor = str(data["cursor"])
+        time.sleep(1)
+
+    updated_list = [cache_by_id.get(n.get("note_id") or n.get("id", ""), n) for n in cached_list]
+    logger.info(f"token 刷新完成: {refreshed} 条已更新")
+    return updated_list
+
+
 def main(refresh: bool = False) -> None:
     """获取收藏列表，更新缓存，导出摘要。
 
     参数
     ----
-    refresh : 强制重新全量拉取（刷新 xsec_token），忽略本地缓存。
+    refresh : 刷新未完成笔记的 xsec_token（只拉取需要的页面）。
     """
     cookies_str = load_env()
     if not cookies_str:
@@ -232,18 +289,25 @@ def main(refresh: bool = False) -> None:
         return
 
     xhs_apis = XHS_Apis()
-    cached_list = [] if refresh else _load_cached_list()
-
-    if refresh:
-        logger.info("强制刷新模式，重新全量拉取收藏列表...")
+    cached_list = _load_cached_list()
 
     if not cached_list:
         all_notes = _fetch_full_list(xhs_apis, cookies_str)
         if not all_notes:
             logger.warning("未获取到任何笔记，请检查 Cookie 是否有效")
             return
-        _save_cached_list(all_notes)
         logger.info(f"全量拉取完成，共 {len(all_notes)} 条")
+    elif refresh:
+        completed_ids = _scan_completed_ids()
+        all_ids = {n.get("note_id") or n.get("id", "") for n in cached_list}
+        pending_ids = all_ids - completed_ids
+        logger.info(f"刷新模式: 缓存 {len(cached_list)} 条，已完成 {len(completed_ids)} 条，需刷新 {len(pending_ids)} 条 token")
+        if pending_ids:
+            all_notes = _refresh_pending_tokens(xhs_apis, cookies_str, cached_list, pending_ids)
+            _save_cached_list(all_notes)
+        else:
+            all_notes = cached_list
+            logger.info("所有笔记已完成，无需刷新")
     else:
         known_ids: set[str] = {
             n.get("note_id") or n.get("id", "") for n in cached_list
@@ -265,6 +329,6 @@ def main(refresh: bool = False) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="获取小红书收藏列表")
-    parser.add_argument("--refresh", action="store_true", help="强制重新全量拉取（刷新 xsec_token）")
+    parser.add_argument("--refresh", action="store_true", help="刷新未完成笔记的 xsec_token")
     args = parser.parse_args()
     main(refresh=args.refresh)
