@@ -34,6 +34,10 @@ from source.application.app import XHS  # noqa: E402
 
 from scripts.export import export_from_db  # noqa: E402
 
+from apis.xhs_pc_apis import XHS_Apis  # noqa: E402
+from xhs_utils.common_util import load_env  # noqa: E402
+from xhs_utils.data_util import handle_note_info, download_note  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
@@ -163,6 +167,35 @@ def _find_note_dir(note_id: str) -> Path | None:
     return None
 
 
+def _fallback_spider_xhs(note_id: str, xsec_token: str, cookies_str: str) -> bool:
+    """XHS-Downloader 失败后，用 Spider_XHS（Cookie）作为 fallback。
+
+    下载到 DOWNLOAD_ROOT 下，目录格式 {nickname}_{user_id}/{title}_{note_id}/，
+    与 _scan_completed_ids 兼容。
+    """
+    note_url = (
+        f"https://www.xiaohongshu.com/explore/{note_id}"
+        f"?xsec_token={xsec_token}&xsec_source=pc_user"
+    )
+    xhs_apis = XHS_Apis()
+    success, msg, res_json = xhs_apis.get_note_info(note_url, cookies_str)
+    if not success or not res_json:
+        logger.warning(f"  -> Spider_XHS fallback 也失败: {msg}")
+        return False
+
+    items = (res_json.get("data") or {}).get("items")
+    if not items:
+        logger.warning(f"  -> Spider_XHS fallback: items 为空 ({msg})")
+        return False
+
+    note_info = items[0]
+    note_info["url"] = note_url
+    note_info = handle_note_info(note_info)
+    download_note(note_info, str(DOWNLOAD_ROOT), "all")
+    logger.info(f"  -> Spider_XHS fallback 成功: {note_info['title'][:30]}")
+    return True
+
+
 def _run_export() -> None:
     """调用 export 模块导出数据库到 Excel/JSON。"""
     try:
@@ -180,9 +213,10 @@ def _run_export() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _download_all(notes: list[dict]) -> None:
+async def _download_all(notes: list[dict], cookies_str: str | None = None) -> None:
     """
     使用 XHS-Downloader 逐条下载笔记。
+    XHS-Downloader 失败时自动 fallback 到 Spider_XHS（需要 Cookie）。
 
     连续失败 MAX_CONSECUTIVE_FAILURES 次后休眠 FAILURE_COOLDOWN_SECONDS 秒，
     然后重置计数器继续处理。
@@ -221,8 +255,12 @@ async def _download_all(notes: list[dict]) -> None:
 
                 # extract 返回列表；result[0] 为空 dict 或含数据的 dict
                 if not result or not result[0] or not result[0].get("作品ID"):
-                    logger.warning(f"[{idx}/{total}] 笔记 {note_id} 提取数据为空")
-                    consecutive_failures += 1
+                    logger.warning(f"[{idx}/{total}] 笔记 {note_id} XHS-Downloader 失败，尝试 Spider_XHS fallback")
+                    if cookies_str and _fallback_spider_xhs(note_id, xsec_token, cookies_str):
+                        consecutive_failures = 0
+                        processed += 1
+                    else:
+                        consecutive_failures += 1
                 else:
                     data = result[0]
                     note_info = _convert_to_info_json(data, url)
@@ -245,8 +283,12 @@ async def _download_all(notes: list[dict]) -> None:
                     processed += 1
 
             except Exception as exc:
-                logger.error(f"[{idx}/{total}] 笔记 {note_id} 处理异常: {exc}")
-                consecutive_failures += 1
+                logger.error(f"[{idx}/{total}] 笔记 {note_id} 处理异常: {exc}，尝试 Spider_XHS fallback")
+                if cookies_str and _fallback_spider_xhs(note_id, xsec_token, cookies_str):
+                    consecutive_failures = 0
+                    processed += 1
+                else:
+                    consecutive_failures += 1
 
             # 连续失败冷却
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -310,8 +352,13 @@ def main(limit: int | None = None) -> None:
         pending_notes = pending_notes[:limit]
         logger.info(f"应用 --limit {limit}，本次处理 {len(pending_notes)} 条")
 
-    # 4. 执行下载
-    asyncio.run(_download_all(pending_notes))
+    # 4. 加载 Cookie 用于 fallback
+    cookies_str = load_env()
+    if not cookies_str:
+        logger.warning("未找到 Cookie，Spider_XHS fallback 不可用")
+
+    # 5. 执行下载
+    asyncio.run(_download_all(pending_notes, cookies_str))
 
 
 # ---------------------------------------------------------------------------
