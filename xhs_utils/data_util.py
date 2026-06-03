@@ -207,26 +207,19 @@ def save_to_xlsx(datas, file_path, type='note'):
     wb.save(file_path)
     logger.info(f'数据保存至 {file_path}')
 
-_DOWNLOAD_HEADERS = {
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "referer": "https://www.xiaohongshu.com/",
-}
-
-
 def download_media(path, name, url, type):
     if not url:
         raise ValueError(f'{type} url is empty: {name}')
-    if url.startswith('http://'):
-        url = 'https://' + url[7:]
     file_path = Path(path) / f'{name}.{"jpg" if type == "image" else "mp4"}'
     if type == 'image':
-        response = requests.get(url, headers=_DOWNLOAD_HEADERS, timeout=REQUEST_TIMEOUT)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         content = response.content
         with open(file_path, mode="wb") as f:
             f.write(content)
     elif type == 'video':
-        res = requests.get(url, stream=True, headers=_DOWNLOAD_HEADERS, timeout=REQUEST_TIMEOUT)
+        res = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT)
+        res.raise_for_status()
         size = 0
         chunk_size = 1024 * 1024
         with open(file_path, mode="wb") as f:
@@ -293,23 +286,16 @@ def download_note(note_info, path, save_choice):
     save_note_detail(note_info, save_path)
     if note_type == '图集' and save_choice in ['media', 'media-image', 'all']:
         for img_index, img_url in enumerate(note_info['image_list']):
-            file_path = Path(save_path) / f'image_{img_index}.jpg'
-            if file_path.exists():
-                continue
             download_media(save_path, f'image_{img_index}', img_url, 'image')
     elif note_type == '视频' and save_choice in ['media', 'media-video', 'all']:
-        cover_path = Path(save_path) / 'cover.jpg'
-        if not cover_path.exists():
-            if note_info.get('video_cover'):
-                download_media(save_path, 'cover', note_info['video_cover'], 'image')
-            else:
-                logger.warning(f"video cover url is empty: {note_id}")
-        video_path = Path(save_path) / 'video.mp4'
-        if not video_path.exists():
-            if note_info.get('video_addr'):
-                download_media(save_path, 'video', note_info['video_addr'], 'video')
-            else:
-                logger.warning(f"video url is empty: {note_id}")
+        if note_info.get('video_cover'):
+            download_media(save_path, 'cover', note_info['video_cover'], 'image')
+        else:
+            logger.warning(f"video cover url is empty: {note_id}")
+        if note_info.get('video_addr'):
+            download_media(save_path, 'video', note_info['video_addr'], 'video')
+        else:
+            logger.warning(f"video url is empty: {note_id}")
     return save_path
 
 
